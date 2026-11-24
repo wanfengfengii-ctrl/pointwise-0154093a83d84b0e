@@ -5,7 +5,7 @@ from enum import StrEnum
 from threading import Lock
 
 from device.ledger import PhysicalCut
-from device.press import DeviceUnavailable, Press, SessionSnapshot, SubmitUnknown
+from device.press import DeviceUnavailable, PlacementConflict, Press, SessionSnapshot, SubmitUnknown
 from device.scale import validate_scale_reading
 from device.sessions import DeviceSession, SessionClosed
 from worklist.recipes import resolve_recipe
@@ -34,6 +34,8 @@ class Submission:
     session_id: int
     recipe: str
     step: DeviceStep
+    paper_id: str | None = None
+    rect: tuple[int, int, int, int] | None = None
 
 
 class ScriptedDevice:
@@ -64,14 +66,33 @@ class ScriptedDevice:
     def open_session(self) -> DeviceSession:
         return self.press.open_session()
 
+    def open_managed_session(self) -> DeviceSession:
+        return self.press.open_managed_session()
+
     def _next_reading(self) -> int | None:
         if not self._readings:
             raise DeviceUnavailable('no scale reading has been scripted for the next cut')
         return self._readings[0]
 
-    def _execute(self, session_id: int, recipe: str) -> PhysicalCut:
-        cut = self.press.submit_cut(session_id, recipe, self._next_reading)
+    def _execute(self, session_id: int, recipe: str, **location) -> PhysicalCut:
+        cut = self.press.submit_cut(session_id, recipe, self._next_reading, **location)
         self._readings.popleft()
+        return cut
+
+    def _queue_request(self, session_id: int, request: tuple) -> None:
+        self._queue[session_id] = request
+
+    def _release(self, session_id: int) -> PhysicalCut | None:
+        request = self._queue[session_id]
+        try:
+            cut = self._execute(session_id, *request[:1], **request[1])
+        except SessionClosed:
+            del self._queue[session_id]
+            return None
+        except PlacementConflict:
+            del self._queue[session_id]
+            return None
+        del self._queue[session_id]
         return cut
 
     def submit_cut(self, session_id: int, recipe: str) -> PhysicalCut:
@@ -82,9 +103,31 @@ class ScriptedDevice:
             if action == DeviceStep.LOSE_BEFORE_EXECUTION:
                 raise SubmitUnknown('submission response lost')
             if action == DeviceStep.DEFER_EXECUTION:
-                self._queue[session_id] = recipe
+                self._queue_request(session_id, (recipe, {}))
                 raise SubmitUnknown('submission response lost')
             cut = self._execute(session_id, recipe)
+            if action == DeviceStep.LOSE_AFTER_EXECUTION:
+                raise SubmitUnknown('submission response lost')
+            return cut
+
+    def submit_shared_cut(
+        self, session_id: int, recipe: str, paper_id: str, rect: tuple[int, int, int, int],
+        *, ticket_id: str | None = None, remaining: tuple[str, ...] | None = None,
+        candidates: dict | None = None,
+    ) -> PhysicalCut:
+        resolve_recipe(recipe)
+        location = {'paper_id': paper_id, 'rect': tuple(rect), 'ticket_id': ticket_id,
+                    'remaining': remaining, 'candidates': candidates}
+        with self._lock:
+            action = self._planned.popleft() if self._planned else DeviceStep.RETURN
+            self._submissions.append(
+                Submission(session_id, recipe, action, paper_id, tuple(rect)))
+            if action == DeviceStep.LOSE_BEFORE_EXECUTION:
+                raise SubmitUnknown('submission response lost')
+            if action == DeviceStep.DEFER_EXECUTION:
+                self._queue_request(session_id, (recipe, location))
+                raise SubmitUnknown('submission response lost')
+            cut = self._execute(session_id, recipe, **location)
             if action == DeviceStep.LOSE_AFTER_EXECUTION:
                 raise SubmitUnknown('submission response lost')
             return cut
@@ -108,14 +151,7 @@ class ScriptedDevice:
             if action == DeviceStep.RELEASE_QUEUED:
                 if session_id is None:
                     raise ValueError('release requires the queued session id')
-                recipe = self._queue[session_id]
-                try:
-                    cut = self._execute(session_id, recipe)
-                except SessionClosed:
-                    del self._queue[session_id]
-                    return None
-                del self._queue[session_id]
-                return cut
+                return self._release(session_id)
             if session_id is not None:
                 raise ValueError('only release takes a session id')
             if action in (DeviceStep.BLOCK_CLOSE, DeviceStep.ALLOW_CLOSE):

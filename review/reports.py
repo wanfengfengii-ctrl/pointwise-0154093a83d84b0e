@@ -41,7 +41,8 @@ def save_report(db: sqlite3.Connection, report: ShiftReport) -> None:
         rows.append({
             'ticket_id': row.ticket.ticket_id, 'position': row.ticket.position,
             'recipe': row.ticket.recipe, 'serial': cut.serial, 'session_id': cut.session_id,
-            'source': cut.source, 'grams': encode_grams(cut.grams),
+            'source': cut.source, 'grams': encode_grams(cut.grams), 'paper_id': cut.paper_id,
+            'rect': None if cut.rect is None else list(cut.rect),
         })
     db.execute('''
         INSERT INTO shift_reports (number, shift_id, rows_json, cut_count, valid_count, grams_total)
@@ -57,7 +58,10 @@ def _restore(row: tuple | None) -> ShiftReport | None:
     rows = []
     for item in json.loads(rows_json):
         ticket = Ticket(shift_id, item['ticket_id'], item['position'], item['recipe'])
-        cut = PhysicalCut(item['serial'], item['session_id'], item['source'], decode_grams(item['grams']))
+        rect = item.get('rect')
+        cut = PhysicalCut(item['serial'], item['session_id'], item['source'],
+                          decode_grams(item['grams']), item.get('paper_id'),
+                          None if rect is None else tuple(rect))
         rows.append(DetailRow(ticket, TicketStatus.CLOSED, cut))
     return ShiftReport(number, ShiftDetail(shift_id, tuple(rows)), ShiftTotals(cuts, valid, decode_grams(grams)))
 

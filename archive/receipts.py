@@ -14,22 +14,26 @@ class TicketTerminal:
 
 def insert_terminal(db: sqlite3.Connection, terminal: TicketTerminal) -> None:
     cut = terminal.cut
+    box = (None, None, None, None) if cut.rect is None else tuple(cut.rect)
     db.execute('''
-        INSERT INTO terminals (shift_id, ticket_id, serial, session_id, source, grams)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO terminals (shift_id, ticket_id, serial, session_id, source, grams, paper_id,
+                               rect_x, rect_y, rect_w, rect_h)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (terminal.shift_id, terminal.ticket_id, cut.serial, cut.session_id,
-          cut.source, encode_grams(cut.grams)))
+          cut.source, encode_grams(cut.grams), cut.paper_id, *box))
 
 
 def find_terminal(db: sqlite3.Connection, shift_id: str, ticket_id: str) -> TicketTerminal | None:
     row = db.execute('''
-        SELECT serial, session_id, source, grams FROM terminals
-        WHERE shift_id = ? AND ticket_id = ?
+        SELECT serial, session_id, source, grams, paper_id, rect_x, rect_y, rect_w, rect_h
+        FROM terminals WHERE shift_id = ? AND ticket_id = ?
     ''', (shift_id, ticket_id)).fetchone()
     if row is None:
         return None
-    serial, session_id, source, grams = row
-    return TicketTerminal(shift_id, ticket_id, PhysicalCut(serial, session_id, source, decode_grams(grams)))
+    serial, session_id, source, grams, paper_id, x, y, w, h = row
+    rect = None if x is None else (x, y, w, h)
+    return TicketTerminal(shift_id, ticket_id,
+                          PhysicalCut(serial, session_id, source, decode_grams(grams), paper_id, rect))
 
 
 def find_serial_owner(db: sqlite3.Connection, serial: int) -> tuple[str, str] | None:

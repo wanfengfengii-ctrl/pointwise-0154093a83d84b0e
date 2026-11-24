@@ -10,11 +10,14 @@ from capture.attempts import (
 from capture.evidence import CaptureEvidence, EvidenceStatus, evidence_from_receipt, pending_evidence
 from device.press import DevicePort, DeviceUnavailable, SubmitUnknown
 from device.sessions import SessionClosed
+from worklist.shared import is_shared_shift
 from worklist.tickets import Ticket
 
 
 def advance(db: sqlite3.Connection, shift_id: str, device: DevicePort) -> TicketView | None:
     with read_snapshot(db):
+        if is_shared_shift(db, shift_id):
+            raise ValueError(f'shift {shift_id!r} is registered as shared paper; use resume_shared')
         ticket = current_ticket(db, shift_id)
     if ticket is None:
         return None

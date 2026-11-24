@@ -47,7 +47,17 @@ def initialize_archive(db: sqlite3.Connection) -> None:
                 session_id INTEGER NOT NULL,
                 source TEXT NOT NULL,
                 grams TEXT,
+                paper_id TEXT,
+                rect_x INTEGER,
+                rect_y INTEGER,
+                rect_w INTEGER,
+                rect_h INTEGER,
                 PRIMARY KEY (shift_id, ticket_id),
                 FOREIGN KEY (shift_id, ticket_id) REFERENCES tickets(shift_id, ticket_id)
             )
         ''')
+        columns = {row[1] for row in db.execute('PRAGMA table_info(terminals)')}
+        for name, kind in (('paper_id', 'TEXT'), ('rect_x', 'INTEGER'), ('rect_y', 'INTEGER'),
+                           ('rect_w', 'INTEGER'), ('rect_h', 'INTEGER')):
+            if name not in columns:
+                db.execute(f'ALTER TABLE terminals ADD COLUMN {name} {kind}')

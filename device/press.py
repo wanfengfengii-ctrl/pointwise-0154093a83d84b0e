@@ -12,6 +12,7 @@ from device.sessions import (
     DeviceSession, create_session, initialize_sessions, load_session, require_open_session, seal_session,
 )
 from worklist.recipes import resolve_recipe
+from worklist.shared import solve_placement as _solve
 
 
 class SubmitUnknown(RuntimeError):
@@ -19,6 +20,10 @@ class SubmitUnknown(RuntimeError):
 
 
 class DeviceUnavailable(RuntimeError):
+    pass
+
+
+class PlacementConflict(ValueError):
     pass
 
 
@@ -34,6 +39,38 @@ class DevicePort(Protocol):
     def submit_cut(self, session_id: int, recipe: str) -> PhysicalCut: ...
     def close_session(self, session_id: int) -> DeviceSession: ...
     def read_session(self, session_id: int) -> SessionSnapshot: ...
+
+
+def _cells(rect: tuple[int, int, int, int]) -> set[tuple[int, int]]:
+    x, y, w, h = rect
+    return {(cx, cy) for cx in range(x, x + w) for cy in range(y, y + h)}
+
+
+def _fits(rect: tuple[int, int, int, int], width: int, height: int) -> bool:
+    x, y, w, h = rect
+    return w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= width and y + h <= height
+
+
+def _free(
+    rect: tuple[int, int, int, int], damaged: frozenset, cuts: tuple,
+) -> bool:
+    occupied = set(damaged)
+    for cut in cuts:
+        occupied |= _cells(cut)
+    return not (_cells(rect) & occupied)
+
+
+def _reserve(
+    ticket_id: str | None, remaining: tuple[str, ...], candidates: dict,
+    occupied: set[tuple[int, int]],
+) -> tuple[int, int, int, int]:
+    """Choose this ticket's final cell so the whole rest of the shift still fits."""
+    if ticket_id is None:
+        raise PlacementConflict('a reserved shared cut needs its ticket')
+    assignment = _solve((ticket_id, *remaining), candidates, occupied)
+    if assignment is None or ticket_id not in assignment:
+        raise PlacementConflict('no placement keeps every remaining ticket feasible')
+    return assignment[ticket_id]
 
 
 class Press:
@@ -87,14 +124,63 @@ class Press:
         with self._transaction(write=True) as db:
             return create_session(db, ledger.latest_serial(db))
 
+    def open_managed_session(self) -> DeviceSession:
+        with self._transaction(write=True) as db:
+            return create_session(db, ledger.latest_serial(db), managed=True)
+
     def submit_cut(
         self, session_id: int, recipe: str, read_scale: Callable[[], int | None],
+        *, paper_id: str | None = None, rect: tuple[int, int, int, int] | None = None,
+        ticket_id: str | None = None, remaining: tuple[str, ...] | None = None,
+        candidates: dict | None = None,
     ) -> PhysicalCut:
         settings = resolve_recipe(recipe)
         with self._transaction(write=True) as db:
             session = require_open_session(db, session_id)
+            if session.managed and paper_id is None:
+                raise ValueError('a managed shared-paper session must use the shared cut path')
+            if (paper_id is None) != (rect is None):
+                raise ValueError('a paper cut needs both the paper id and the placement')
+            if paper_id is not None:
+                sheet = ledger.read_paper(db, paper_id)
+                if sheet is None:
+                    raise PlacementConflict(f'unknown paper {paper_id!r}')
+                if not _fits(rect, sheet.width, sheet.height):
+                    raise PlacementConflict('the placement lies off the paper')
+                damaged, cuts = ledger.paper_occupancy(db, paper_id)
+                if remaining is not None:
+                    reserved = set(damaged)
+                    for cut in cuts:
+                        reserved |= _cells(cut)
+                    rect = _reserve(ticket_id, remaining, candidates or {}, reserved)
+                elif not _free(rect, damaged, cuts):
+                    raise PlacementConflict('the placement overlaps damage or a prior cut')
             reading = measure(read_scale())
-            return ledger.append_cut(db, session, self.device_id, settings.die, reading)
+            return ledger.append_cut(
+                db, session, self.device_id, settings.die, reading, paper_id=paper_id, rect=rect,
+            )
+
+    def load_paper(self, paper_id: str, width: int, height: int) -> ledger.Paper:
+        if not isinstance(paper_id, str) or not paper_id.strip() or '\x00' in paper_id:
+            raise ValueError('invalid paper identifier')
+        if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+            raise ValueError('paper dimensions must be positive integers')
+        with self._transaction(write=True) as db:
+            return ledger.load_paper(db, paper_id, width, height)
+
+    def read_paper(self, paper_id: str) -> ledger.Paper | None:
+        with self._transaction() as db:
+            return ledger.read_paper(db, paper_id)
+
+    def mark_damage(self, paper_id: str, cells) -> None:
+        with self._transaction(write=True) as db:
+            ledger.mark_damage(db, paper_id, cells)
+
+    def paper_state(self, paper_id: str) -> tuple[ledger.Paper | None, frozenset, tuple]:
+        with self._transaction() as db:
+            sheet = ledger.read_paper(db, paper_id)
+            damaged, cuts = ledger.paper_occupancy(db, paper_id)
+            return sheet, damaged, cuts
 
     def close_session(self, session_id: int) -> DeviceSession:
         with self._transaction(write=True) as db:

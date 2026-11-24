@@ -7,11 +7,15 @@ from capture.attempts import load_pending_attempt, record_evidence
 from capture.dispatch import deliver_evidence, dispatch_ticket
 from capture.evidence import EvidenceStatus
 from capture.reconcile import reconcile_attempt
+from capture.shared import resume_shared  # re-exported shared-paper entry point
 from device.press import DevicePort
+from worklist.shared import is_shared_shift
 
 
 def resume(db: sqlite3.Connection, shift_id: str, device: DevicePort) -> TicketView | None:
     with read_snapshot(db):
+        if is_shared_shift(db, shift_id):
+            raise ValueError(f'shift {shift_id!r} is registered as shared paper; use resume_shared')
         ticket = current_ticket(db, shift_id)
         attempt = load_pending_attempt(db, shift_id)
     if ticket is None:

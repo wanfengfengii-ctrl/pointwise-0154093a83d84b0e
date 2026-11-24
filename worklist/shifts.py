@@ -56,8 +56,13 @@ def load_shift(db: sqlite3.Connection, shift_id: str) -> tuple[Ticket, ...] | No
 
 
 def register(db: sqlite3.Connection, shift_id: str, entries: Iterable[tuple[str, str]]) -> str:
+    from worklist.shared import is_shared_shift
+
     requested = validate_ticket_batch(shift_id, entries)
     with _write(db):
+        if is_shared_shift(db, shift_id):
+            raise RegistrationConflict(
+                f'shift {shift_id!r} is already registered as shared paper')
         existing = load_shift(db, shift_id)
         if existing is None:
             db.execute('INSERT INTO shifts (shift_id) VALUES (?)', (shift_id,))
@@ -65,3 +70,12 @@ def register(db: sqlite3.Connection, shift_id: str, entries: Iterable[tuple[str,
         elif not same_ticket_order(existing, requested):
             raise RegistrationConflict(f'shift {shift_id!r} already has a different worklist')
     return shift_id
+
+
+def register_shared(
+    db: sqlite3.Connection, shift_id: str, paper_id: str, width: int, height: int,
+    entries: Iterable[tuple[str, str, Iterable]],
+) -> str:
+    from worklist.shared import register_shared as _register_shared
+
+    return _register_shared(db, shift_id, paper_id, width, height, entries)
