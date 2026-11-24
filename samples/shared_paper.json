@@ -1,0 +1,23 @@
+{
+  "shift_id": "sheet-day",
+  "paper_id": "sheet-7",
+  "width": 7,
+  "height": 1,
+  "serial_floor": 40,
+  "entries": [
+    ["A", "strip", [[0, 0, 2, 1], [2, 0, 2, 1], [4, 0, 2, 1]]],
+    ["B", "round", [[0, 0, 1, 1], [6, 0, 1, 1]]],
+    ["C", "round", [[1, 0, 1, 1]]]
+  ],
+  "readings": [0, null, 23],
+  "damage": {
+    "continue": [[6, 0]],
+    "blocked": [[0, 0], [6, 0]],
+    "after_first": [[0, 0]]
+  },
+  "expected": {
+    "cuts": [[41, 0, "P1/strip-10/cut/41"], [42, null, "P1/round-25/cut/42"], [43, 23, "P1/round-25/cut/43"]],
+    "continue_rects": [[[2, 0, 2, 1], [0, 0, 1, 1], [1, 0, 1, 1]], [[4, 0, 2, 1], [0, 0, 1, 1], [1, 0, 1, 1]]],
+    "totals": {"cuts": 3, "valid_readings": 2, "grams": 23}
+  }
+}

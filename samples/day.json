@@ -1,0 +1,14 @@
+{
+  "shift_id": "day-1",
+  "device_id": "P1",
+  "serial_floor": 40,
+  "tickets": [["A", "round"], ["B", "round"]],
+  "scale_readings": [null, 23],
+  "submissions": ["defer_execution", "return"],
+  "expected": {
+    "waiting": ["pending", "pending", "todo", 1, 0],
+    "device": [[41, null, "P1/round-25/cut/41"], [42, 23, "P1/round-25/cut/42"]],
+    "tickets": [["A", "closed", 41, null, "P1/round-25/cut/41"], ["B", "closed", 42, 23, "P1/round-25/cut/42"]],
+    "report": {"number": "report:day-1", "order": ["A", "B"], "cuts": 2, "valid_readings": 1, "grams": 23}
+  }
+}
